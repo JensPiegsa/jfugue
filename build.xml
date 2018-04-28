@@ -1,0 +1,142 @@
+<project name="JFugue" default="dist" basedir=".">
+
+  <property name="app.name" value="JFugue"/>
+  <property name="app.distname" value="jfugue"/>
+  <property name="app.version" value="5.0"/>
+  <property name="dist.filename" value="${app.distname}-${app.version}"/>  
+  <property name="src.zip" value="${dist.filename}-src.zip"/>
+  <property name="doc.zip" value="${dist.filename}-doc.zip"/>
+  
+  <property name="src.dir" location="src"/>
+  <property name="src.main.dir" location="src/main"/>
+  <property name="src.main.resources.dir" location="src/main/resources"/>
+  <property name="src.test.dir" location="src/test"/>
+  <property name="src.test.resources.dir" location="src/test/resources"/>
+  <property name="src.manualtest.dir" location="src/manualtest"/>
+  <property name="src.demo.dir" location="src/demo"/>
+  <property name="src.tour.dir" location="src/tour"/>
+  <property name="target.main.dir" location="target/main"/>
+  <property name="target.test.dir" location="target/test"/>
+  <property name="dist.dir" location="dist"/>
+  <property name="doc.dir" location="doc"/>
+  <property name="top.dir" location="."/>
+  
+  
+  <echo>
+    Application: ${app.name} ${app.version}
+    Build File : ${ant.file} 
+    Run by     : ${user.name}
+    Taret Dir  : ${target.main.dir}
+    Source Dir : ${src.main.dir}
+    Java Home  : ${java.home}
+  </echo>
+  
+  <path id="compile.classpath">
+    <fileset dir="${src.main.resources.dir}">
+      <include name="**/*.jar" />
+    </fileset>
+  </path>
+
+  <path id="test.classpath">
+      <pathelement location="${target.main.dir}" />    
+      <pathelement location="${src.test.dir}/resources/junit-4.11.jar"/>
+      <pathelement location="${src.test.dir}/resources/hamcrest-core-1.3.jar"/>
+      <pathelement location="${src.main.dir}/resources/xom-1.2.10.jar"/>
+      <pathelement location="${src.test.resources.dir}/*.jar" />
+      <pathelement location="${target.test.dir}" />    
+  </path>
+
+  <target name="help">
+      <echo message="JFugue build targets:" />
+      <echo message="test         - Run the JUnit tests in src/test" />
+      <echo message="build        - Generate .class files of code in src.main. Depends on 'test'" />
+      <echo message="betajar      - Creates a jar that includes .class and .jar files from src.main. Names jar using datestamp and timestamp. Depends on 'build'" />
+      <echo message="zip-source   - Creates a zip of all sources and jars from src/main, src/test, src/manualtest, src/demo, and src/tour." />
+      <echo message="doc          - Generates JavaDoc for code in src/main." />
+      <echo message="zip-doc      - Creates a zip of the JavaDoc in the doc folder. Depends on 'javadoc'" />
+      <echo message="clean        - Removes the target folders." />
+      <echo message="dist         - Calls jar, source-zip, and javadoc-zip." />
+      <echo message="betadist     - Calls jar, source-zip, and javadoc-zip, and gives them beta-timestamp filenames." />
+  </target>
+  
+  <target name="init">
+    <!-- Create the time stamp -->
+    <tstamp/>
+  </target>
+  
+  <target name="build" depends="clean,compile,test"/>
+
+  <target name="test" depends="compile-test">
+    <junit haltonfailure="no" failureproperty="test.failed">
+      <classpath refid="test.classpath" />
+      <batchtest>
+         <fileset dir="${src.test.dir}/java">
+           <include name="**/*Test*" />
+         </fileset>
+      </batchtest>
+      <formatter type="plain" usefile="false" /> <!-- type could also be brief --> 
+    </junit>
+    <fail message="Test failure detected, check test results." if="test.failed" />
+  </target>   
+
+
+  <target name="betajar" depends="compile">
+    <!-- Put everything in ${target.main.dir} into the $jar.name_${DSTAMP}_${TSTAMP}.jar file -->
+    <jar jarfile="${dist.filename}_${DSTAMP}_${TSTAMP}.jar" basedir="${target.main.dir}" />
+  </target>
+
+  <target name="compile" depends="init">
+      <mkdir dir="${target.main.dir}" />
+      <javac srcdir="${src.main.dir}" destdir="${target.main.dir}" includeantruntime="true" nowarn="yes" debug="true">
+        <classpath refid="compile.classpath" />
+      </javac>
+  </target>
+
+  <target name="compile-test" depends="compile">
+      <mkdir dir="${target.test.dir}" />
+      <javac srcdir="${src.test.dir}" destdir="${target.test.dir}" includeantruntime="true" nowarn="yes" debug="true">
+        <classpath>
+          <pathelement location="${target.main.dir}" /> 
+          <pathelement location="${src.test.resources.dir}/junit-4.11.jar" /> 
+                     <fileset dir="${src.main.resources.dir}">
+                        <include name="**/*.jar" />
+                     </fileset>
+        </classpath>
+      </javac>
+  </target>
+
+  <target name="clean">
+      <delete dir="${target.main.dir}"/>
+      <delete dir="${target.test.dir}"/>
+  </target>
+
+  <!-- Generate JavaDoc for current project into ${doc.dir} -->
+  <target name="doc" description="Generate JavaDoc documentation">
+    <javadoc sourcepath="${src.main.dir}/java" destdir="${doc.dir}">
+      <classpath>
+              <pathelement location="${src.main.dir}/resources/xom-1.2.10.jar"/>
+      </classpath>
+    </javadoc>
+  </target>
+
+  <target name="dist" depends="build,zip-source,zip-doc">
+      <jar jarfile="${dist.filename}.jar" basedir="${target.main.dir}" />
+  </target>
+  
+  <target name="betadist" depends="build,doc">
+    <zip destfile="${dist.filename}_${DSTAMP}_${TSTAMP}-src.zip" basedir="${src.dir}" update="false" />
+    <zip destfile="${dist.filename}_${DSTAMP}_${TSTAMP}-doc.zip" basedir="${doc.dir}" update="false" />
+    <jar jarfile="${dist.filename}_${DSTAMP}_${TSTAMP}.jar" basedir="${target.main.dir}" />
+  </target>
+
+  <target name="zip-source">
+    <zip destfile="${src.zip}" basedir="${src.dir}" update="false" />
+  </target>
+  
+  <target name="zip-doc" depends="doc">
+    <zip destfile="${doc.zip}" basedir="${doc.dir}" update="false" />
+  </target>
+  
+  
+</project>
+
