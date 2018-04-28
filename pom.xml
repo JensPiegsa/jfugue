@@ -52,7 +52,9 @@
 					</execution>
 				</executions>
 				<configuration>
-					<additionalOptions>-Xdoclint:none</additionalOptions>
+					<additionalOptions>
+						<additionalOption>-Xdoclint:none</additionalOption>
+					</additionalOptions>
 				</configuration>
 			</plugin>
 		</plugins>
