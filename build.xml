@@ -67,7 +67,7 @@
   <target name="build" depends="clean,compile,test"/>
 
   <target name="test" depends="compile-test">
-    <junit haltonfailure="no" failureproperty="test.failed">
+    <junit haltonfailure="no" failureproperty="test.failed" fork="true">
       <classpath refid="test.classpath" />
       <batchtest>
          <fileset dir="${src.test.dir}/java">
