@@ -39,19 +39,24 @@ public class UnknownTokenTest {
 	
 	@Before
 	public void setup() {
-		assumeFalse(MidiSystem.getMidiDeviceInfo().length == 0);
 		this.player = new Player();
 	}
 	
     @Test
     public void testDefaultBehaviorForUnknownToken() {
-    	player.play("UNKNOWN");
+	    assumeMidiAvailable();
+	    player.play("UNKNOWN");
     }
 
-    @Test(expected=ParserException.class) 
+	@Test(expected=ParserException.class)
     public void testExceptionOnUnknownToken() {
+		assumeMidiAvailable();
     	player.getStaccatoParser().setThrowsExceptionOnUnknownToken(true);
     	player.play("UNKNOWN");
     }
+
+	private static void assumeMidiAvailable() {
+		assumeFalse(MidiSystem.getMidiDeviceInfo().length == 0);
+	}
 
 }
