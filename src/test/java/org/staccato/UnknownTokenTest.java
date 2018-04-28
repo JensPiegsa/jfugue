@@ -19,8 +19,12 @@
 
 package org.staccato;
 
+import static org.junit.Assume.assumeFalse;
+
+import javax.sound.midi.MidiSystem;
 import org.jfugue.parser.ParserException;
 import org.jfugue.player.Player;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -35,6 +39,7 @@ public class UnknownTokenTest {
 	
 	@Before
 	public void setup() {
+		assumeFalse(MidiSystem.getMidiDeviceInfo().length == 0);
 		this.player = new Player();
 	}
 	
