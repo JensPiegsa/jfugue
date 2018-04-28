@@ -1,0 +1,361 @@
+/*
+ * JFugue, an Application Programming Interface (API) for Music Programming
+ * http://www.jfugue.org
+ *
+ * Copyright (C) 2003-2014 David Koelle
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+ 
+package org.jfugue.midi;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.sound.midi.MetaMessage;
+import javax.sound.midi.MidiEvent;
+import javax.sound.midi.MidiMessage;
+import javax.sound.midi.Sequence;
+import javax.sound.midi.SysexMessage;
+import javax.sound.midi.Track;
+
+import org.jfugue.parser.Parser;
+import org.jfugue.theory.Note;
+import org.staccato.StaccatoParserContext;
+
+public class MidiParser extends Parser
+{
+    private List<Map<Byte, TempNote>> noteCache; 
+    private float divisionType = MidiDefaults.DEFAULT_DIVISION_TYPE;
+    private int resolutionTicksPerBeat = MidiDefaults.DEFAULT_RESOLUTION_TICKS_PER_BEAT;
+    private int tempoBPM = MidiDefaults.DEFAULT_TEMPO_BEATS_PER_MINUTE;
+    private int currentChannel = -1;
+    private double[] currentTimeInBeats;
+    private double[] expectedTimeInBeats;
+    private List<AuxilliaryMidiParser> auxilliaryParsers;
+    
+    public MidiParser() {
+        super();
+        auxilliaryParsers = new ArrayList<AuxilliaryMidiParser>();
+    }
+    
+    public void parse(Sequence sequence) {
+        this.startParser();
+        
+        // Read events from the whole sequence
+        // TODO (Read events from the whole sequence)
+        this.divisionType = sequence.getDivisionType();
+        this.resolutionTicksPerBeat = sequence.getResolution();
+        
+        // Read events from each track
+        for (Track track : sequence.getTracks()) {
+            for (int i=0; i < track.size(); i++) {
+                MidiEvent event = track.get(i);
+                parseEvent(event);
+            }
+        }
+        
+        this.stopParser();
+    }
+    
+    public void startParser() {
+        fireBeforeParsingStarts();
+
+        initNoteCache();
+        
+        this.divisionType = MidiDefaults.DEFAULT_DIVISION_TYPE;
+        this.resolutionTicksPerBeat = MidiDefaults.DEFAULT_RESOLUTION_TICKS_PER_BEAT;
+    }
+    
+    public void stopParser() {
+        fireAfterParsingFinished();
+    }
+
+    private void initNoteCache() {
+        noteCache = new ArrayList<Map<Byte, TempNote>>();
+        this.currentTimeInBeats = new double[NUM_CHANNELS];
+        this.expectedTimeInBeats = new double[NUM_CHANNELS];
+        
+        for (int i=0; i < NUM_CHANNELS; i++) {
+            noteCache.add(new HashMap<Byte, TempNote>());
+            this.currentTimeInBeats[i] = 0.0d;
+            this.expectedTimeInBeats[i] = 0.0d;
+        }
+    }
+    
+    /**
+     * Parses the following messages:
+     * - Note On events
+     * - Note Off events
+     * - Polyphonic Aftertouch
+     * - Controller Events
+     * - Program Change (instrument changes)
+     * - Channel Aftertouch
+     * - Pitch Wheel
+     * - Meta Events: Tempo, Lyric, Marker, Key Signature, Time Signature
+     * - SysEx Events
+     * 
+     * Any other MIDI messages (particularly, other Meta Events) are not handled by this MidiParser.
+     * 
+     * You may implement an AuxilliaryMidiParser to know when MidiParser has
+     * parsed or not parsed a given MIDI message.
+     *  
+     * @see AuxilliaryMidiParser
+     * 
+     * @param event the event to parse
+     */
+    public void parseEvent(MidiEvent event) {
+        MidiMessage message = event.getMessage();
+        int status = message.getStatus() & 0xFF;
+        if ((status >= 128) && (status <= 239)) {
+            int messageId = (status-128) / 16; 
+            int channel = status % 16;
+            
+            // For any message that isn't a NoteOn event, update the current time and channel.
+            // (We don't do this for NoteOn events because NoteOn aren't written until the NoteOff event)
+            if (!isNoteOnEvent(messageId, channel, event)) { 
+                checkChannel(channel);
+            }
+            
+            switch (messageId) {
+                case NOTE_OFF 	: noteOff(channel, event); fireHandledMidiEvent(event); break;
+                case NOTE_ON	: noteOn(channel, event); fireHandledMidiEvent(event); break;
+                case CONTROL 	: controlChange(channel, event); fireHandledMidiEvent(event); break;
+                case PROGRAM 	: programChange(channel, event); fireHandledMidiEvent(event); break;
+                case POLY_AFTER : polyphonicAftertouch(channel, event); fireHandledMidiEvent(event); break;
+                case PITCH_WHEEL : pitchWheel(channel, event); fireHandledMidiEvent(event); break;
+                case CHANNEL_AFTER : channelAftertouch(channel, event); fireHandledMidiEvent(event); break;
+                default : fireUnhandledMidiEvent(event); break;
+            }
+        }
+        else if (status == 0xFF) {
+        	// This is a meta message, and it has a Type
+        	MetaMessage meta = (MetaMessage)message;
+        	switch (meta.getType()) {
+        		case LYRIC: lyricParsed(meta); fireHandledMidiEvent(event); break;
+        		case TEMPO: tempoChanged(meta); fireHandledMidiEvent(event); break;
+        		case MARKER: markerParsed(meta); fireHandledMidiEvent(event); break;
+        		case KEYSIG: keySigParsed(meta); fireHandledMidiEvent(event); break;
+        		case TIMESIG: timeSigParsed(meta); fireHandledMidiEvent(event); break;
+        		default: fireUnhandledMidiEvent(event); ; break;
+        	}
+        }
+        else if (status == 0xF0) {
+        	// This is a SysEx message, and it has variable stuff
+        	SysexMessage sysex = (SysexMessage)message;
+        	sysexParsed(sysex);
+        	fireHandledMidiEvent(event); 
+        }
+        else {
+        	fireUnhandledMidiEvent(event); 
+        }
+    }
+    
+    private boolean isNoteOnEvent(int messageId, int channel, MidiEvent event) {
+        return ((messageId == NOTE_ON) && ! 
+                ((noteCache.get(channel).get(event.getMessage().getMessage()[1]) != null) && 
+                 (event.getMessage().getMessage()[2] == 0)));
+    }
+        
+    private boolean isNoteOffEvent(int messageId, int channel, MidiEvent event) {
+    	// An event is a NoteOff event if it is actually a NoteOff event, 
+    	// or if it is a NoteOn event where the note has already been played and the attack velocity is 0. 
+        return ((messageId == NOTE_OFF) || 
+                ((messageId == NOTE_ON) &&
+                 (noteCache.get(channel).get(event.getMessage().getMessage()[1]) != null) && 
+                 (event.getMessage().getMessage()[2] == 0)));
+    }
+        
+    private void noteOff(int channel, MidiEvent event) {
+        byte note = event.getMessage().getMessage()[1];
+        TempNote tempNote = noteCache.get(channel).get(note);
+        if (tempNote == null) {
+        	// A note was turned off when that note was never indicated as having been turned on
+        	return;
+        }
+        noteCache.get(channel).remove(note);
+    	checkTime(tempNote.startTick);
+        
+        long durationInTicks = event.getTick() - tempNote.startTick;
+        float durationInBeats = getDurationInBeats(durationInTicks);
+        byte decayVelocity = event.getMessage().getMessage()[2];
+        this.expectedTimeInBeats[this.currentChannel] = this.currentTimeInBeats[this.currentChannel] + durationInBeats; 
+	
+        Note noteObject = new Note(note);
+        noteObject.setDuration(getDurationInBeats(durationInTicks));
+        System.out.println("Duration in beats: "+getDurationInBeats(durationInTicks)+"  Duration in ticks: "+durationInTicks+"   event.getTick()="+event.getTick()+"   startTick="+tempNote.startTick); // TODO Remove this println
+        noteObject.setAttackVelocity(tempNote.attackVelocity);
+        noteObject.setDecayVelocity(decayVelocity);
+        
+        fireNoteParsed(noteObject);
+    }    
+    
+    private void noteOn(int channel, MidiEvent event) {
+        if (isNoteOffEvent(NOTE_ON, channel, event)) {
+        	// Some MIDI files use the Note On event with 0 velocity to indicate Note Off
+        	noteOff(channel, event);
+        	return;
+        }
+        
+        byte note = event.getMessage().getMessage()[1];
+        byte attackVelocity = event.getMessage().getMessage()[2];
+        if (noteCache.get(channel).get(note) != null) {
+        	// The note already existed in the cache! Nothing to do about it now. This shouldn't happen.
+        } else {
+        	noteCache.get(channel).put(note, new TempNote(event.getTick(), attackVelocity));
+        }
+    }
+        
+    private void polyphonicAftertouch(int channel, MidiEvent event) {
+        firePolyphonicPressureParsed(event.getMessage().getMessage()[1], event.getMessage().getMessage()[2]);
+    }
+    
+    private void controlChange(int channel, MidiEvent event) {
+        fireControllerEventParsed(event.getMessage().getMessage()[1], event.getMessage().getMessage()[2]); 
+    }
+        
+    private void programChange(int channel, MidiEvent event) {
+        fireInstrumentParsed(event.getMessage().getMessage()[1]); 
+    }
+    
+    private void channelAftertouch(int channel, MidiEvent event) {
+        fireChannelPressureParsed(event.getMessage().getMessage()[1]); 
+    }
+    
+    private void pitchWheel(int channel, MidiEvent event) {
+        firePitchWheelParsed(event.getMessage().getMessage()[1], event.getMessage().getMessage()[2]); 
+    }
+    
+    private void tempoChanged(MetaMessage meta) {
+    	int newTempoMSPQ = (meta.getData()[2] & 0xFF) | 
+    		((meta.getData()[1] & 0xFF) << 8) | 
+    		((meta.getData()[0] & 0xFF) << 16);
+    	this.tempoBPM = newTempoMSPQ = 60000000 / newTempoMSPQ;
+    	fireTempoChanged(tempoBPM);
+    }
+    
+    private void lyricParsed(MetaMessage meta) {
+    	fireLyricParsed(new String(meta.getData()));
+    }
+    
+    private void markerParsed(MetaMessage meta) {
+    	fireMarkerParsed(new String(meta.getData()));
+    }
+    
+    private void keySigParsed(MetaMessage meta) {
+    	fireKeySignatureParsed(meta.getData()[0], meta.getData()[1]);
+    }
+
+    private void timeSigParsed(MetaMessage meta) {
+    	fireTimeSignatureParsed(meta.getData()[0], meta.getData()[1]);
+    }
+
+    private void sysexParsed(SysexMessage sysex) {
+    	fireSystemExclusiveParsed(sysex.getData());   
+    }
+    
+    private void checkTime(long tick) {
+        float newTimeInBeats = getDurationInBeats(tick);
+        if (this.expectedTimeInBeats[this.currentChannel] != newTimeInBeats) {
+        	if (newTimeInBeats > expectedTimeInBeats[this.currentChannel]) {
+        		fireNoteParsed(Note.createRest(newTimeInBeats - expectedTimeInBeats[this.currentChannel]));
+        	} else {
+        		fireTrackBeatTimeRequested(newTimeInBeats);
+        	}
+        }
+        this.currentTimeInBeats[this.currentChannel] = newTimeInBeats;
+    }
+    
+    private void checkChannel(int channel) {
+        if (this.currentChannel != channel) {
+            fireTrackChanged((byte)channel);
+            this.currentChannel = channel;
+        }
+    }    
+
+    
+    //
+    // Formulas and converters
+    //
+    
+    private float getDurationInBeats(long durationInTicks) {
+        return durationInTicks / (float)this.resolutionTicksPerBeat / 4.0f;  
+    }
+    
+    private long ticksToMs(long ticks) {
+    	return (long)((ticks / (double)this.resolutionTicksPerBeat) * (1.0f / (double)this.tempoBPM) * MidiDefaults.MS_PER_MIN); 
+    }
+    
+    private long msToTicks(long ms) {
+    	return (long)((ms / (double)MidiDefaults.MS_PER_MIN) * (double)this.tempoBPM * (double)this.resolutionTicksPerBeat); 
+    }
+
+    
+    //
+    // AuxilliaryMidiParser
+    //
+    
+    public void addAuxilliaryMidiParser(AuxilliaryMidiParser auxilliaryParser) {
+    	auxilliaryParsers.add(auxilliaryParser);
+    }
+    
+    public void removeAuxilliaryMidiParser(AuxilliaryMidiParser auxilliaryParser) {
+    	auxilliaryParsers.remove(auxilliaryParser);
+    }
+    
+    protected void fireHandledMidiEvent(MidiEvent event) {
+    	for (AuxilliaryMidiParser auxilliaryParser : auxilliaryParsers) {
+    		auxilliaryParser.parseHandledMidiEvent(event, this);
+    	}
+    }
+    
+    protected void fireUnhandledMidiEvent(MidiEvent event) {
+    	for (AuxilliaryMidiParser auxilliaryParser : auxilliaryParsers) {
+    		auxilliaryParser.parseUnhandledMidiEvent(event, this);
+    	}
+    }
+    
+    
+    // 
+    // TempNote data structure
+    //
+    
+    class TempNote {
+        long startTick;
+        byte attackVelocity;
+        
+        public TempNote(long startTick, byte attackVelocity) {
+            this.startTick = startTick;
+            this.attackVelocity = attackVelocity;
+        }
+    }
+    
+    private static final byte NOTE_OFF = 0x00;
+    private static final byte NOTE_ON = 0x01;
+    private static final byte POLY_AFTER = 0x02;
+    private static final byte CONTROL = 0x03;
+    private static final byte PROGRAM = 0x04;
+    private static final byte CHANNEL_AFTER = 0x05;
+    private static final byte PITCH_WHEEL = 0x06;
+
+    // Meta Events
+    private static final byte LYRIC = 0x05;
+    private static final byte MARKER = 0x06;
+    private static final byte TEMPO = 0x51;
+    private static final byte TIMESIG = 0x58;
+    private static final byte KEYSIG = 0x59;
+
+    private static final int NUM_CHANNELS = 16;
+}

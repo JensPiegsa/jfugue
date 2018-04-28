@@ -38,12 +38,12 @@
   </path>
 
   <path id="test.classpath">
-      <pathelement location="${target.main.dir}" />    
+      <pathelement location="${target.main.dir}" />
       <pathelement location="${src.test.dir}/resources/junit-4.11.jar"/>
       <pathelement location="${src.test.dir}/resources/hamcrest-core-1.3.jar"/>
       <pathelement location="${src.main.dir}/resources/xom-1.2.10.jar"/>
       <pathelement location="${src.test.resources.dir}/*.jar" />
-      <pathelement location="${target.test.dir}" />    
+      <pathelement location="${target.test.dir}" />
   </path>
 
   <target name="help">
@@ -96,8 +96,8 @@
       <mkdir dir="${target.test.dir}" />
       <javac srcdir="${src.test.dir}" destdir="${target.test.dir}" includeantruntime="true" nowarn="yes" debug="true">
         <classpath>
-          <pathelement location="${target.main.dir}" /> 
-          <pathelement location="${src.test.resources.dir}/junit-4.11.jar" /> 
+          <pathelement location="${target.main.dir}" />
+          <pathelement location="${src.test.resources.dir}/junit-4.11.jar" />
                      <fileset dir="${src.main.resources.dir}">
                         <include name="**/*.jar" />
                      </fileset>
